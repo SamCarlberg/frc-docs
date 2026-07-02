@@ -24,6 +24,7 @@ dependencies = [
     "sphinxcontrib-serializinghtml==2.0.0",
     "sphinxcontrib-svg2pdfconverter==2.1.0",
     "sphinxcontrib-video==0.4.2",
+    "sphinxcontrib-mermaid==2.0.2",
     "sphinx_contributors==0.3.0",
     "sphinxext-delta==0.4.1",
     "sphinxext-mimic==0.1.1",

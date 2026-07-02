@@ -40,6 +40,7 @@ extensions = [
     "sphinx.ext.todo",
     "sphinx.ext.autosectionlabel",
     "sphinx.ext.intersphinx",
+    "sphinxcontrib.mermaid",
     "sphinxcontrib.rsvgconverter",
     "sphinxcontrib.video",
     "sphinxext.delta",
