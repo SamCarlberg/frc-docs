@@ -22,15 +22,34 @@ Each physical mechanism on a robot should have a corresponding class in the code
 
 Mechanisms are often a combination of multiple actuators, such as a slapdown intake with one actuator or set of actuators to run intake rollers and a separate actuator that extends and retracts the intake. It's usually simpler for each independent actuator to have its own ``Mechanism`` class; if they're only used in the context of a larger mechanism, they can still be separate classes, but only used by a single encompassing mechanism.
 
-In this example of a slapdown intake, there could be three classes:
+### Mechanism-level Commands
+
+Commands that only interact with a single mechanism should be defined as methods in that mechanism's class using the ``run`` or ``runRepeatedly`` builder methods provided by the ``Mechanism`` interface. These builder methods make the created command automatically require the mechanism so you can't forget to set the requirement.
+
+.. warning:: Command methods are designed to create a ``Command`` object that will be run at a later point in the program. Only the code in the lambda function passed to ``run`` or ``runRepeatedly`` will execute when the command is running.
+
+In the example of a slapdown intake, there could be three classes:
 
 1. ``IntakeRoller``, for controlling just the rollers
 2. ``IntakeWrist``, for controlling the deployment of the intake
 3. ``Intake``, which combines both the rollers and the wrist
 
-.. remoteliteralinclude:: https://raw.githubusercontent.com/wpilibsuite/allwpilib/main/wpilibjExamples/src/main/java/org/wpilib/examples/rebuiltcmdv3/mechanisms/Intake.java
+### ``IntakeRoller.java``
 .. remoteliteralinclude:: https://raw.githubusercontent.com/wpilibsuite/allwpilib/main/wpilibjExamples/src/main/java/org/wpilib/examples/rebuiltcmdv3/mechanisms/IntakeRoller.java
+
+### ``IntakeWrist.java``
 .. remoteliteralinclude:: https://raw.githubusercontent.com/wpilibsuite/allwpilib/main/wpilibjExamples/src/main/java/org/wpilib/examples/rebuiltcmdv3/mechanisms/IntakeWrist.java
+
+### ``Intake.java``
+.. remoteliteralinclude:: https://raw.githubusercontent.com/wpilibsuite/allwpilib/main/wpilibjExamples/src/main/java/org/wpilib/examples/rebuiltcmdv3/mechanisms/Intake.java
+
+## Multi-Mechanism Commands
+
+Commands that control multiple mechanisms should coordinate smaller per-mechanism commands. From the intake example above, take note that the main ``Intake`` class has no hardware of its own; all hardware control is done in the separate roller and wrist mechanisms, while ``Intake`` is only responsible for coordinating the two.
+
+Not every multi-mechanism control scheme needs to use a encapsulating mechanism to coordinate control. The intake example uses that setup because the wrist and roller are *part* of the intake, but control of disparate mechanisms like an intake and an arm can use a no-requirement command that forks and coordinates mechanism-specific commands.
+
+Complex multi-mechanism control can also be done using :doc:`state machines <state-machines>`.
 
 ## OpMode Classes
 
@@ -39,12 +58,6 @@ OpMode classes let you group mode-specific logic together in one place without c
 OpMode constructors are generally all that's needed. WPILib will automatically call them when that mode is selected on the driver station, passing in the main ``Robot`` object if the constructor accepts it.
 
 .. remoteliteralinclude:: https://raw.githubusercontent.com/wpilibsuite/allwpilib/main/wpilibjExamples/src/main/java/org/wpilib/examples/rebuiltcmdv3/opmodes/auto/SweepAuto.java
-
-## Mechanism-level Commands
-
-Commands that only interact with a single mechanism should be defined as methods in that mechanism's class using the ``run`` or ``runRepeatedly`` builder methods provided by the ``Mechanism`` interface. These builder methods make the created command automatically require the mechanism so you can't forget to set the requirement.
-
-.. warning:: Command methods are designed to create a ``Command`` object that will be run at a later point in the program. Only the code in the lambda function passed to ``run`` or ``runRepeatedly`` will execute when the command is running.
 
 ```java
 package first.robot.mechanisms;
@@ -121,8 +134,3 @@ public class VeryComplicatedCommand implements Command {
   }
 }
 ```
-
-
-## Multi-Mechanism Commands
-
-

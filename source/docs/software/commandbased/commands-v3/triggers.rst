@@ -1,22 +1,22 @@
 # Command Triggers
 
-Triggers are the primary way to start commands in response to external events, such as a button press, a sensor value reaching a threshold, or a specific robot state. A trigger represents a true/false signal that is polled by an event loop. By default, that event loop is polled during ``Scheduler.run()``.
+Triggers are the primary way to start commands in response to external events, such as a button press, a sensor value reaching a threshold, or a specific robot state. Triggers are checked (or "polled") at the start of every ``Scheduler.run()`` method call ( :doc:`how-it-works` goes over the specific phases in more detail).
 
-Triggers cache their signal when they are polled. Calling ``getAsBoolean()`` reads the most recently polled value, not necessarily the live value of the underlying button or sensor at that exact instant. This is what lets triggers reliably detect rising and falling edges within a scheduler cycle.
+Triggers cache their signal when they are polled. Calling ``getAsBoolean()`` reads the most recently polled value, not necessarily the live value of the underlying button or sensor at that exact instant. This is what lets triggers reliably detect rising and falling edges within a scheduler cycle and have consistency in telemetry.
 
 ## Creating Triggers
 
-A ``Trigger`` is created by providing a ``BooleanSupplier`` (a function that returns ``true`` or ``false``) or by combining existing triggers.
+A ``Trigger`` is created by providing a ``BooleanSupplier`` (a :doc:`lambda function <lambda-functions>` that returns ``true`` or ``false``) or by combining existing triggers.
 
 ```java
 // A trigger for a gamepad button
 Trigger button = xboxController.a();
 
 // A trigger for a limit switch
-Trigger limitSwitch = new Trigger(limitSwitch::get);
+Trigger atTop = new Trigger(topLimitSwitch::get);
 
 // A trigger for a complex condition by combining two triggers
-Trigger isReady = new Trigger(arm::isAtTarget).and(shooter::isAtSpeed);
+Trigger isReady = new Trigger(turret::isAtTarget).and(shooter::isAtSpeed);
 ```
 
 ## Trigger Bindings
@@ -32,7 +32,9 @@ Triggers implement the Java ``BooleanSupplier`` interface, making them compatibl
 *   ``whileTrue(Command)``: Schedules the command on a rising edge and cancels it on a falling edge. If the command stops while the trigger is still ``true``, it is **not** restarted.
 *   ``whileFalse(Command)``: Schedules the command on a falling edge and cancels it on a rising edge. If the command stops while the trigger is still ``false``, it is **not** restarted.
 
-Use ``onTrue`` and ``onFalse`` for commands that should start once and then manage their own lifetime. Use ``whileTrue`` and ``whileFalse`` for commands whose lifetime should be tied to the signal. For example, "move while the bumper is held" is a ``whileTrue`` binding, while "start an intake sequence when the bumper is pressed" is usually an ``onTrue`` binding.
+Use ``onTrue`` and ``onFalse`` for commands that should run until they finish and use ``whileTrue`` and ``whileFalse`` for commands whose lifetime should be tied to the signal. For example, "move while the bumper is held" is a ``whileTrue`` binding, while "start an intake sequence when the bumper is pressed" is usually an ``onTrue`` binding.
+
+.. note:: Most triggers for operator control should use ``whileTrue``. This lets drivers easily halt a command just by letting go of the button it's bound to.
 
 ### Continuous/Retry Bindings
 
@@ -76,9 +78,9 @@ Toggle bindings are best for operator controls where the driver explicitly switc
 
 ### Multi-Press Bindings
 
-The ``multiPress(int, Time)`` binding allows commands to be bound when a trigger signal has had a minimum number of rising edges within a specific time period.
+The ``multiPress(int, Time)`` modifier allows commands to be bound when a trigger signal has had a minimum number of rising edges within a specific time period.
 
-For example, ``Trigger.multiPress(2, Seconds.of(1.5))`` will go high when there have been **at least** two rising edges within the last 1.5 seconds, and will go low when there are fewer. This can be used with ``onTrue`` to respond to a double-press. The multi-press trigger remains high as long as enough presses are still inside the time window; it is not only high on the final button press.
+For example, ``driverController.a().multiPress(2, Seconds.of(1.5))`` will go high when there have been **at least** two rising edges on the driver's "A" button within the last 1.5 seconds, and will go low when there are fewer. This can be used with ``onTrue`` to respond to a double-press. The multi-press trigger remains high as long as enough presses are still inside the time window; it is not only high on the final button press.
 
 ## Combining Triggers
 
@@ -102,17 +104,56 @@ You can also modify how a trigger responds to the underlying condition:
 *   ``risingEdge()``: Creates a trigger that is only ``true`` for a single loop cycle when the original condition transitions from ``false`` to ``true``.
 *   ``fallingEdge()``: Creates a trigger that is only ``true`` for a single loop cycle when the original condition transitions from ``true`` to ``false``.
 
-Because ``risingEdge()`` and ``fallingEdge()`` are only high for one scheduler cycle, bind commands to them with ``onTrue``. A ``whileTrue`` binding on a one-cycle edge trigger will schedule the command and then cancel it on the next cycle.
+.. warning:: Because ``risingEdge()`` and ``fallingEdge()`` are only high for a single scheduler cycle, bind commands to them with ``onTrue``. A ``whileTrue`` binding on a one-cycle edge trigger will schedule the command and then cancel it on the next cycle.
 
 ## Scopes
 
-Trigger bindings exist in *scopes*. When a scope exits, any trigger binding that was created in that scope will be removed and the commands attached to that binding will be canceled. This is a critical safety feature of the library.
+Trigger bindings exist in *scopes*. When a scope exits, any trigger binding that was created in that scope will be removed and the commands attached to that binding will be canceled. This is a critical safety feature of the library to prevent commands being triggered at unexpected moments.
+
+.. warning:: A scoped trigger is only polled while its scope is active. If a scoped trigger is cached and referenced outside the scope where it was created, it will always return the value it had at the moment its scope exited.
 
 1.  **Global Scope**: Bindings created in the ``Robot`` constructor or methods called by it. These are always active.
 2.  **OpMode Scope**: Bindings created while a specific OpMode is running. These are automatically removed when the OpMode ends.
 3.  **Command Scope**: Bindings created inside a running command. These are removed when the command finishes or is canceled.
 
-See :doc:`scopes` for more details.
+.. note:: See :doc:`scopes` for more information about scopes.
+
+```java
+import first.robot.mechanisms.*;
+import org.wpilib.framework.OpModeRobot;
+import org.wpilib.command3.button.RobotModeTriggers;
+
+public class Robot extends OpModeRobot {
+  public final Arm arm = new Arm();
+  public final Intake intake = new Intake();
+  public final Drive drive = new Drive();
+  public final LEDs leds = new LEDs();
+  public final CommandGamepad driverController = new CommandGamepad(1);
+
+  public Robot() {
+    // GLOBAL SCOPE: This binding is always active
+    driverController.a().onTrue(arm.up());
+  }
+}
+
+// OPMODE SCOPE: A trigger binding made in an opmode is only active while that opmode is running.
+@Autonomous
+public class ExampleAuto implements OpMode {
+  public ExampleAuto(Robot robot) {
+    new Trigger(RobotState::isFMSAttached).whileFalse(robot.leds.flashCommsWarning());
+  }
+}
+
+// COMMAND SCOPE: A trigger binding inside a command is only active while that command is running.
+public Command sweepAndScore() {
+  return Command.noRequirements(coroutine -> {
+    // This binding only exists while the 'sweepAndScore' command is running
+    intakeTrigger.onTrue(intake.intakeOnce());
+
+    coroutine.await(drive.followPath("SweepPath"));
+  }).named("Sweep and Score");
+}
+```
 
 ## Game Controller Triggers
 
@@ -126,35 +167,7 @@ You can also use axis values (like the analog sticks or analog triggers) to crea
 
 ```java
 // Trigger when the left Y axis is pushed more than 50% forward
-Trigger highThrottle = new Trigger(() -> driverController.getLeftY() > 0.5);
+Trigger highThrottle = new Trigger(() -> driverController.getLeftY() > 0.5).debounce(Milliseconds.of(200));
 
-highThrottle.onTrue(Command.print("High Throttle!"));
-```
-
-```java
-import org.wpilib.framework.TimedRobot;
-import org.wpilib.command3.button.RobotModeTriggers;
-
-public class Robot extends TimedRobot {
-  public Robot() {
-    // GLOBAL SCOPE: This binding is always active
-    driverController.a().onTrue(arm.up());
-  }
-
-  @Override
-  public void autonomousInit() {
-    // OPMODE SCOPE: This binding only exists during autonomous
-    RobotModeTriggers.autonomous().onTrue(drive.followPath("AutoPath"));
-  }
-}
-
-// COMMAND SCOPE example
-public Command sweepAndScore() {
-  return Command.noRequirements(coroutine -> {
-    // This binding only exists while the 'sweepAndScore' command is running
-    intakeTrigger.onTrue(intake.runOnce());
-
-    coroutine.await(drive.followPath("SweepPath"));
-  }).named("Sweep and Score");
-}
+highThrottle.onTrue(Command.noRequirements(_ -> System.out.println("High throttle!")).named("High Throttle Print"));
 ```

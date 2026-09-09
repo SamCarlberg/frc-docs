@@ -21,7 +21,8 @@ public class Robot extends OpModeRobot {
 
   public Robot() {
     // Bind a command to execute whenever the minimum limit is reached.
-    atMinLimit.onTrue(Command.print("Min limit reached!").named("Limit Message"));
+    atMinLimit.onTrue(
+      Command.noRequirements(_ -> System.out.println("Min limit reached!")).named("Limit Message"));
   }
 }
 ```

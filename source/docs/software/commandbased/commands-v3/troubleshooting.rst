@@ -6,15 +6,16 @@
 
 If you write a ``while`` loop in a command that is missing a ``coroutine.yield()`` call, the WPILib compiler plugin will issue an error. This is because a loop that never yields will starve the rest of the robot program, preventing other commands from running and sensor data from being updated.
 
-The fix is not "avoid loops"; loops are expected in commands v3. The fix is to make sure every periodic loop reaches a yielding method. ``yield()``, ``wait()``, ``waitUntil()``, ``await()``, and ``park()`` all give control back to the scheduler.
+The fix is not to avoid loops; loops are expected in commands v3. The fix is to make sure every loop invokes a yielding method. ``yield()``, ``wait()``, ``waitUntil()``, ``await()``, and ``park()`` all give control back to the scheduler.
 
 **Example of an error:**
+
+The ``while``-loop in this command will be flagged by the compiler check because there a ``Coroutine`` parameter is in scope but no yielding method is called in the loop. This will result in the error message **"Missing call to `coroutine.yield()`"** pointing to the ``while`` statement.
 
 ```java
 public Command greedyCommand() {
   return run(coroutine -> {
     while (true) {
-      // Error: missing call to coroutine.yield()!
       doSomething();
     }
   });
@@ -66,7 +67,7 @@ The staged builder is intentionally strict. A command without a name is hard to 
 
 ### Command Does Not Restart
 
-Scheduling the same ``Command`` instance while it is already scheduled or running has no effect. The scheduler will not rewind the coroutine, rerun the command from the beginning, or create a second copy of the same command instance.
+Scheduling the same ``Command`` instance while it is already scheduled or running has no effect. The scheduler will *not* rewind the coroutine, rerun the command from the beginning, or create a new copy of the same command instance.
 
 ```java
 Command armUp = arm.up();
@@ -91,13 +92,39 @@ public Command temporaryBinding() {
 }
 ```
 
-The command above finishes immediately, so the binding is cleaned up immediately. **How to fix it:** create long-lived controls in global or OpMode setup, or keep the command alive with ``coroutine.park()`` or another yielding wait if the binding is meant to exist only while that command is running.
+The command above finishes immediately, so the binding is cleaned up immediately.
+
+**How to fix it:** create long-lived controls in global or OpMode setup, or keep the command alive with ``coroutine.park()`` or another yielding wait if the binding is meant to exist only while that command is running.
+
+### Trigger Not Updating In Commands
+
+Triggers are updated once per scheduler cycle and use a cached value for the entire cycle. If a command changes the state of something that is used in a trigger, that trigger's state won't be updated until the next scheduler cycle.
+
+```java
+double setpoint = 0;
+Trigger atSetpoint = new Trigger(() -> Math.abs(getPosition() - setpoint) <= 0.01);
+
+public Command moveToSetpoint(double setpoint) {
+  return run(coroutine -> {
+    this.setpoint = setpoint;
+
+    // Instantly exits if the mechanism was already at the previous setpoint
+    // because the `atSetpoint` trigger will have been queried and cached before
+    // the setpoint was changed by this command.
+    coroutine.waitUntil(atSetpoint);
+  }).named("Move To Setpoint");
+}
+```
+
+**How to fix it:** Use a normal ``BooleanSupplier`` instead of a ``Trigger``, or have the trigger use sensor-based feedback instead of referencing mutable state.
 
 ### State Machine Missing Initial State
 
 When defining :doc:`state-machines`, you must call `setInitialState() <https://github.wpilib.org/allwpilib/docs/beta/java/org/wpilib/command3/StateMachine.html#setInitialState(org.wpilib.command3.StateMachine.State)>`__ before the state machine can be used as a command. Forgetting this call will result in a compile-time error.
 
 **Example of an error:**
+
+This state machine is missing an initial state, which will result in a compile-time error **"Partially-initialized object `sm` is missing a call to initializer method `setInitialState()`"**
 
 ```java
 public Command stateMachineExample() {
@@ -154,6 +181,36 @@ Transitions created with ``when(condition)`` are checked while the current state
 
 ### Coroutine Used Outside a Command
 
-The ``Coroutine`` object passed to command logic is only valid while that command is mounted and running. Storing it in a field and calling it later, or trying to use it from another callback or thread, will throw an ``IllegalStateException``.
+The ``Coroutine`` object passed to command logic is only valid while that command is mounted and running. Storing it in a field and calling it later, or trying to use it from another callback or thread, will result in the compile-time error **"Captured coroutines may not be stored in fields"** (if assigning to a field) or **"Coroutine `parentCoroutine` may not be in scope. Consider using `childCoroutine`"** (if using )
 
 **How to fix it:** Keep coroutine calls inside the command body. If another part of the robot program needs to start behavior, expose a command factory method and schedule the returned command through a trigger or from another command.
+
+### Using the Wrong Coroutines
+
+If nested inline commands are used, each command can only use its own coroutine. Using the wrong coroutine will result in a compiler error.
+
+In this example, an inner command accidentally uses a coroutine from its parent command instead of its own. The compiler will report an error **"Coroutine `coroutine1` may not be in scope. Consider using `coroutine2`"**.
+
+```java
+Command.noRequirements(coroutine1 -> {
+  Command childCommand = Command.noRequirements(coroutine2 -> {
+    coroutine1.await(intake.intake()); // Using the wrong coroutine
+    coroutine2.await(intake.stow());
+  }).named("Child Command")
+
+  parentCoroutine.await(childCommand);
+}).named("Parent Command");
+```
+
+**How to fix it:** Use the correct coroutine object as reported by the compiler message, but also consider renaming the coroutine parameters to give them more distinct names that are harder to mix up.
+
+```java
+Command.noRequirements(parentCoroutine -> {
+  Command childCommand = Command.noRequirements(childCoroutine -> {
+    childCoroutine.await(intake.intake()); // Using the correct coroutine parameter
+    childCoroutine.await(intake.stow());
+  }).named("Child Command")
+
+  parentCoroutine.await(childCommand);
+}).named("Parent Command");
+```
